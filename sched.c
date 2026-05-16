@@ -59,13 +59,66 @@ void init_scheduler(void) {
 struct pcb_t * get_mlq_proc(void) {
 	struct pcb_t * proc = NULL;
 
+	static int curr_prio = 0; /* Muc uu tien dang phuc vu - giu gia tri giua cac lan goi */
+	static int curr_slot = 0; /* So slot con lai - giu gia tri giua cac lan goi           */
+
 	pthread_mutex_lock(&queue_lock);
 	/*TODO: get a process from PRIORITY [ready_queue].
 	 *      It worth to protect by a mechanism.
 	 * */
 
-	if (proc != NULL)
-		enqueue(&running_list, proc);
+	for (int i = 0; i < curr_prio; i++) {
+		if (!empty(&mlq_ready_queue[i])) {
+			curr_prio = i;
+			curr_slot = 0;
+			break;
+		}
+	}
+
+
+	while (1) {
+
+		/* Neu het slot hoac moi bat dau: tim queue khong rong tiep theo */
+		if (curr_slot == 0) {
+			int found = 0;
+			/* Duyet vong tron tu curr_prio de xet het tat ca muc uu tien */
+			for (int i = 0; i < MAX_PRIO; i++) {
+				int check_prio = (curr_prio + i) % MAX_PRIO;
+				if (!empty(&mlq_ready_queue[check_prio])) {
+					curr_prio = check_prio;
+					curr_slot = slot[curr_prio]; /* slot[i] = MAX_PRIO - i */
+					found = 1;
+					break;
+				}
+			}
+			if (!found) { /* Tat ca queue rong */
+				pthread_mutex_unlock(&queue_lock);
+				return NULL;
+			}
+		}
+
+		/* Lay tien trinh khoi queue hien tai */
+		proc = dequeue(&mlq_ready_queue[curr_prio]);
+
+		if (proc != NULL) {
+			curr_slot--;                  /* Tieu thu 1 slot              */
+			enqueue(&running_list, proc); /* Ghi nhan vao running_list    */
+
+			/* Het slot -> chuan bi chuyen sang muc tiep theo */
+			if (curr_slot == 0) {
+				curr_prio = (curr_prio + 1) % MAX_PRIO;
+			}
+			break; /* Thoat vong lap - da lay duoc tien trinh */
+
+		} else {
+			/* Queue bat ngo rong (CPU khac lay mat tien trinh). */
+			curr_slot = 0;
+			/* continue while loop */
+		}
+
+	} /* end while */
+
+	pthread_mutex_unlock(&queue_lock);
 	return proc;	
 }
 
@@ -80,6 +133,7 @@ void put_mlq_proc(struct pcb_t * proc) {
 	 */
 
 	pthread_mutex_lock(&queue_lock);
+	purgequeue(&running_list, proc); /* Xoa tien trinh khoi running_list */
 	enqueue(&mlq_ready_queue[proc->prio], proc);
 	pthread_mutex_unlock(&queue_lock);
 }
@@ -93,7 +147,7 @@ void add_mlq_proc(struct pcb_t * proc) {
 	 *       It worth to protect by a mechanism.
 	 * 
 	 */
-       
+    
 	pthread_mutex_lock(&queue_lock);
 	enqueue(&mlq_ready_queue[proc->prio], proc);
 	pthread_mutex_unlock(&queue_lock);	
